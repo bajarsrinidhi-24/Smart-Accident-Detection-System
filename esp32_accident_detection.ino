@@ -9,12 +9,12 @@
 #include <math.h>
 
 /* ================= WIFI ================= */
-char ssid[] = "CarControl";
-char pass[] = "CC654321";
+char ssid[] = "xxxx";
+char pass[] = "xxxxx";
 
 /* ================= THINGSPEAK ================= */
 const char* host = "api.thingspeak.com";
-String apiKey = "B11O5ENONN6BWYQO";   // WRITE API KEY
+#include "secrets.h"   // WRITE API KEY
 WiFiClient client;
 
 /* ================= SENSOR PINS ================= */
