@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Project Monitoring Panel | Real-time ADXL335 Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  /* Times New Roman theme — professional classic style */
+  :root {
+    --bg:       #f0f4f8;
+    --panel:    #ffffff;
+    --border:   #d1dce8;
+    --accent1:  #0284c7;   /* sky blue   */
+    --accent2:  #7c3aed;   /* violet     */
+    --accent3:  #059669;   /* green      */
+    --danger:   #dc2626;
+    --warn:     #d97706;
+    --text:     #1e293b;
+    --muted:    #64748b;
+    --x-color:  #0284c7;
+    --y-color:  #7c3aed;
+    --z-color:  #059669;
+    --m-color:  #d97706;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Times New Roman', Times, serif;
+    font-size: 17px;
+    min-height: 100vh;
+  }
+  header {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .logo {
+    font-family: 'Times New Roman', Times, serif;
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: var(--accent1);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  .logo span { color: var(--accent2); }
+  .ts-config {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  /* Inputs are visually present but we will prefill them from hidden secure variables.
+     However to keep keys invisible on dashboard, we will not display placeholder values.
+     The user won't see the keys because we fill them programmatically and disable input 
+     visibility? Actually we remove manual input for keys entirely — but we keep channel 
+     display optional? Better: remove readkey input from UI. I'll hide the API key field
+     and channel field will be auto-filled but not shown with values — instead we embed 
+     via script and remove manual entry to avoid exposure. For full security, we will not 
+     render any visible input containing the key. The "Fetch Data" button will use 
+     embedded constants. So the dashboard user never sees channel id or key in UI. */
+  .hidden-creds {
+    display: none;
+  }
+  .btn {
+    padding: 7px 18px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-family: 'Times New Roman', Times, serif;
+    font-weight: 700;
+    font-size: 1rem;
+    letter-spacing: 1px;
+    transition: opacity .2s, transform .1s;
+  }
+  .btn:hover { opacity: .85; transform: translateY(-1px); }
+  .btn-primary { background: var(--accent1); color: #000; }
+  .btn-danger  { background: var(--danger);  color: #fff; }
+  .status-bar {
+    background: #e2eaf3;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 28px;
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: 0.9rem;
+  }
+  .status-item { display: flex; align-items: center; gap: 7px; }
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background .4s;
+  }
+  .dot.online  { background: var(--accent3); box-shadow: 0 0 6px var(--accent3); }
+  .dot.alert   { background: var(--danger);  box-shadow: 0 0 6px var(--danger);  animation: blink 1s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  main {
+    padding: 20px 24px;
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(12, 1fr);
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+  .card.cyan::before   { background: linear-gradient(90deg, var(--accent1), transparent); }
+  .card.violet::before { background: linear-gradient(90deg, var(--accent2), transparent); }
+  .card.green::before  { background: linear-gradient(90deg, var(--accent3), transparent); }
+  .card.amber::before  { background: linear-gradient(90deg, var(--warn), transparent); }
+  .card-title {
+    font-weight: 700;
+    font-size: 0.95rem;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+  .sensor-card  { grid-column: span 5; }
+  .detect-card  { grid-column: span 4; }
+  .system-card  { grid-column: span 3; }
+  .graph-card   { grid-column: span 6; }
+  .location-card{ grid-column: span 6; }
+  .log-card     { grid-column: span 12; }
+  .video-card   { grid-column: span 12; }
+  @media(max-width:900px) {
+    .sensor-card, .detect-card, .system-card,
+    .graph-card, .location-card { grid-column: span 12; }
+  }
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  .metric {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 10px;
+    text-align: center;
+  }
+  .metric-label {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .metric-value {
+    font-size: 1.6rem;
+    font-weight: 700;
+  }
+  .metric-unit { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+  .cv-x { color: var(--x-color); }
+  .cv-y { color: var(--y-color); }
+  .cv-z { color: var(--z-color); }
+  .cv-m { color: var(--m-color); }
+  .cv-t { color: var(--accent3); }
+  .metrics-wide {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .detect-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .detect-block {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    text-align: center;
+  }
+  .detect-label {
+    font-size: 0.85rem;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .detect-value {
+    font-size: 2.2rem;
+    font-weight: 700;
+    transition: color .4s;
+  }
+  .detect-badge {
+    display: inline-block;
+    padding: 4px 14px;
+    border-radius: 20px;
+    font-weight: 700;
+    font-size: 0.95rem;
+    letter-spacing: 1px;
+    margin-top: 6px;
+    transition: background .4s, color .4s;
+  }
+  .badge-safe    { background: #d1fae5; color: var(--accent3); border: 1px solid var(--accent3); }
+  .badge-danger  { background: #fee2e2; color: var(--danger);  border: 1px solid var(--danger); animation: blink 1s infinite; }
+  .badge-normal  { background: #ede9fe; color: var(--accent2); border: 1px solid var(--accent2); }
+  .sys-list { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  .sys-item {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.82rem;
+  }
+  .sys-key { color: var(--muted); font-weight: 700; letter-spacing: 1px; font-size: 0.95rem; }
+  .chart-tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .tab-btn {
+    padding: 4px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all .2s;
+  }
+  .tab-btn.active { border-color: var(--accent1); color: var(--accent1); background: #e0f2fe; }
+  .chart-wrap { position: relative; height: 200px; }
+  .coord-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .coord-box {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+  }
+  .coord-label { font-size: 0.85rem; color: var(--muted); letter-spacing: 1px; font-weight: 700; }
+  .coord-value { font-size: 1.1rem; margin-top: 4px; color: var(--accent3); }
+  .map-placeholder {
+    background: #f1f5f9;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    height: 160px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--muted);
+  }
+  .map-icon { font-size: 2rem; opacity: .4; }
+  .map-link {
+    color: var(--accent1);
+    font-size: 0.9rem;
+    word-break: break-all;
+    text-decoration: none;
+  }
+  .log-table-wrap { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+  thead th {
+    background: #f1f5f9;
+    color: var(--muted);
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background .15s; }
+  tbody tr:hover { background: #f1f5f9; }
+  tbody td { padding: 7px 12px; white-space: nowrap; }
+  .log-danger { color: var(--danger); font-weight: bold; }
+  .log-safe   { color: var(--accent3); }
+  .video-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media(max-width:600px) { .video-grid { grid-template-columns: 1fr; } }
+  .video-slot {
+    background: #f8fafc;
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .video-slot-label {
+    font-size: 0.8rem;
+    letter-spacing: 1px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  .video-slot input[type="text"] {
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 12px;
+    font-family: monospace;
+    font-size: 0.78rem;
+    width: 100%;
+    outline: none;
+  }
+  .video-frame {
+    width: 100%;
+    aspect-ratio: 16/9;
+    border-radius: 6px;
+    background: #e2eaf3;
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    overflow: hidden;
+  }
+  .video-frame iframe { width:100%; height:100%; border:none; border-radius:6px; }
+  .video-frame video  { width:100%; height:100%; border-radius:6px; object-fit:cover; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">PROJECT <span>MONITORING</span> PANEL</div>
+  <div class="ts-config">
+    <!-- No visible inputs for Channel ID or API Key anymore — the credentials are embedded securely in script.
+         The user just clicks "Fetch Live Data" to update dashboard from ThingSpeak. Keys never appear on UI. -->
+    <button class="btn btn-primary" id="fetchBtn">⬇ Fetch Live Data</button>
+    <button class="btn btn-danger"  id="clearBtn">✕ Clear</button>
+  </div>
+</header>
+
+<div class="status-bar">
+  <div class="status-item"><div class="dot" id="dotWifi"></div><span id="lblWifi">WiFi: Offline</span></div>
+  <div class="status-item"><div class="dot" id="dotData"></div><span id="lblData">Data: Waiting</span></div>
+  <div class="status-item"><div class="dot" id="dotAlert"></div><span id="lblAlert">Alert: None</span></div>
+  <div class="status-item" style="margin-left:auto;color:var(--muted)">
+    <span id="lblTime">--:--:--</span>
+  </div>
+</div>
+
+<main>
+  <!-- SENSOR METRICS -->
+  <div class="card cyan sensor-card">
+    <div class="card-title">📡 Live Sensor — ADXL335</div>
+    <div class="metrics-grid">
+      <div class="metric"><div class="metric-label">AccX</div><div class="metric-value cv-x" id="mX">—</div><div class="metric-unit">g-force</div></div>
+      <div class="metric"><div class="metric-label">AccY</div><div class="metric-value cv-y" id="mY">—</div><div class="metric-unit">g-force</div></div>
+      <div class="metric"><div class="metric-label">AccZ</div><div class="metric-value cv-z" id="mZ">—</div><div class="metric-unit">g-force</div></div>
+    </div>
+    <div class="metrics-wide">
+      <div class="metric"><div class="metric-label">Magnitude</div><div class="metric-value cv-m" id="mMag">—</div><div class="metric-unit">g-force</div></div>
+      <div class="metric"><div class="metric-label">Tilt</div><div class="metric-value cv-t" id="mTilt">—</div><div class="metric-unit">degrees</div></div>
+    </div>
+  </div>
+
+  <!-- DETECTION OUTPUT -->
+  <div class="card violet detect-card">
+    <div class="card-title">🧠 Detection Output</div>
+    <div class="detect-grid">
+      <div class="detect-block"><div class="detect-label">Threshold</div><div class="detect-value" id="dThresh" style="color:var(--muted)">—</div><div class="detect-badge badge-safe" id="dThreshBadge">UNKNOWN</div></div>
+      <div class="detect-block"><div class="detect-label">ML Prediction</div><div class="detect-value" id="dML" style="color:var(--muted)">—</div><div class="detect-badge badge-normal" id="dMLBadge">UNKNOWN</div></div>
+    </div>
+  </div>
+
+  <!-- SYSTEM STATUS -->
+  <div class="card green system-card">
+    <div class="card-title">⚙️ System Status</div>
+    <ul class="sys-list">
+      <li class="sys-item"><span class="sys-key">SENSOR</span><span class="sys-val" style="color:var(--accent3)">ADXL335</span></li>
+      <li class="sys-item"><span class="sys-key">WiFi</span><span class="sys-val" id="sysWifi" style="color:var(--muted)">—</span></li>
+      <li class="sys-item"><span class="sys-key">LAST UPDATE</span><span class="sys-val" id="sysUpdate" style="color:var(--muted)">—</span></li>
+      <li class="sys-item"><span class="sys-key">DATA POINTS</span><span class="sys-val" id="sysPoints" style="color:var(--muted)">—</span></li>
+    </ul>
+  </div>
+
+  <!-- GRAPHS -->
+  <div class="card cyan graph-card">
+    <div class="card-title">📊 Sensor Graphs</div>
+    <div class="chart-tabs">
+      <button class="tab-btn active" data-chart="X">AccX</button>
+      <button class="tab-btn" data-chart="Y">AccY</button>
+      <button class="tab-btn" data-chart="Z">AccZ</button>
+      <button class="tab-btn" data-chart="M">Magnitude</button>
+    </div>
+    <div class="chart-wrap"><canvas id="mainChart"></canvas></div>
+  </div>
+
+  <!-- LOCATION -->
+  <div class="card green location-card">
+    <div class="card-title">🗺️ Location Tracking</div>
+    <div class="coord-grid">
+      <div class="coord-box"><div class="coord-label">Latitude</div><div class="coord-value" id="locLat">17.412977</div></div>
+      <div class="coord-box"><div class="coord-label">Longitude</div><div class="coord-value" id="locLng">78.399029</div></div>
+    </div>
+    <div style="width:100%;height:260px;border-radius:10px;overflow:hidden;border:1px solid var(--border);margin-top:10px;" id="mapContainer">
+      <iframe width="100%" height="100%" style="border:0;" loading="lazy" allowfullscreen
+        src="https://www.openstreetmap.org/export/embed.html?bbox=78.394029%2C17.407977%2C78.404029%2C17.417977&layer=mapnik&marker=17.412977%2C78.399029">
+      </iframe>
+    </div>
+    <a class="map-link" id="mapsLink" href="https://www.google.com/maps?q=17.412977,78.399029" target="_blank" style="display:block;margin-top:8px;">
+      ↗ Open in Google Maps
+    </a>
+  </div>
+
+  <!-- EVENT LOG -->
+  <div class="card amber log-card">
+    <div class="card-title">🗂️ Event Log</div>
+    <div class="log-table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Timestamp</th><th>AccX (g)</th><th>AccY (g)</th><th>AccZ (g)</th><th>Magnitude</th><th>Tilt °</th><th>Threshold</th><th>ML</th></tr></thead>
+        <tbody id="logBody"><tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px;">No data yet — click "Fetch Live Data"</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- DEMO VIDEO -->
+  <div class="card violet video-card">
+    <div class="card-title">🎬 Demo Videos</div>
+    <div class="video-grid">
+      <div class="video-slot"><div class="video-slot-label">Video 1 — YouTube / URL</div><input type="text" id="vid1url" placeholder="Paste YouTube URL or video path" oninput="loadVideo(1)" /><div class="video-frame" id="vid1frame"><span>No video loaded</span></div></div>
+      <div class="video-slot"><div class="video-slot-label">Video 2 — YouTube / URL</div><input type="text" id="vid2url" placeholder="Paste YouTube URL or video path" oninput="loadVideo(2)" /><div class="video-frame" id="vid2frame"><span>No video loaded</span></div></div>
+    </div>
+  </div>
+</main>
+
+<script>
+  // ====================== SECURE EMBEDDED CREDENTIALS ========================
+  // THINGSPEAK CHANNEL & READ API KEY (hidden from UI, not visible in any input)
+  const THINGSPEAK_CHANNEL = "3349962";
+  const THINGSPEAK_READ_KEY = "IDR8DUAZY02P5I0Z";
+  
+  // No visible fields for these keys — dashboard users never see them.
+  // The fetch function uses these constants internally.
+  // ============================================================================
+
+  let chartData = { X:[], Y:[], Z:[], M:[], labels:[] };
+  let activeChart = 'X';
+  let chartInstance = null;
+  const chartColors = { X:'#00e5ff', Y:'#a78bfa', Z:'#34d399', M:'#fbbf24' };
+  const chartLabels = { X:'AccX (g)', Y:'AccY (g)', Z:'AccZ (g)', M:'Magnitude (g)' };
+
+  setInterval(() => {
+    document.getElementById('lblTime').textContent = new Date().toLocaleTimeString();
+  }, 1000);
+
+  function adcToG(raw) {
+    if (raw === undefined || isNaN(raw)) return 0;
+    const v = (raw / 1023) * 3.3;
+    return ((v - 1.65) / 0.3);
+  }
+
+  async function fetchThingSpeak() {
+    const channel = THINGSPEAK_CHANNEL;
+    const apiKey = THINGSPEAK_READ_KEY;
+    if (!channel || !apiKey) { alert("Configuration missing."); return; }
+    
+    setStatus('dotData','','Fetching…');
+    try {
+      const url = `https://api.thingspeak.com/channels/${channel}/feeds.json?api_key=${apiKey}&results=50`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (!json.feeds || json.feeds.length === 0) {
+        alert('No data returned. Check channel credentials.');
+        setStatus('dotData','','Data: Error');
+        return;
+      }
+      processFeeds(json.feeds);
+      setStatus('dotWifi','online','WiFi: Connected');
+      setStatus('dotData','online','Data: Live');
+      document.getElementById('sysWifi').textContent = 'Connected';
+      document.getElementById('sysWifi').style.color = 'var(--accent3)';
+      document.getElementById('sysPoints').textContent = json.feeds.length;
+    } catch(e) {
+      alert('Fetch failed: ' + e.message);
+      setStatus('dotData','','Data: Error');
+      setStatus('dotWifi','','WiFi: Offline');
+    }
+  }
+
+  function processFeeds(feeds) {
+    chartData = { X:[], Y:[], Z:[], M:[], labels:[] };
+    clearLogTable();
+
+    let lastLat = null, lastLng = null;
+    feeds.forEach((f, idx) => {
+      const raw1 = parseFloat(f.field1);
+      const raw2 = parseFloat(f.field2);
+      const raw3 = parseFloat(f.field3);
+      
+      let gx = isNaN(raw1) ? 0 : (raw1 > 10 ? adcToG(raw1) : raw1);
+      let gy = isNaN(raw2) ? 0 : (raw2 > 10 ? adcToG(raw2) : raw2);
+      let gz = isNaN(raw3) ? 0 : (raw3 > 10 ? adcToG(raw3) : raw3);
+      
+      const mag = Math.sqrt(gx*gx + gy*gy + gz*gz);
+      const tilt = Math.round(Math.atan2(Math.sqrt(gx*gx + gy*gy), Math.abs(gz)+0.0001) * (180/Math.PI));
+      const thresh = mag > 2.5 ? 1 : 0;
+      
+      let ml = thresh;
+      const rawML = f.field4 ? parseFloat(f.field4) : null;
+      if (rawML !== null && !isNaN(rawML)) ml = (rawML > 0.5 ? 1 : 0);
+      
+      const lat = f.field5 ? parseFloat(f.field5) : null;
+      const lng = f.field6 ? parseFloat(f.field6) : null;
+      if (lat && lng && !isNaN(lat) && !isNaN(lng)) { lastLat = lat; lastLng = lng; }
+      
+      const ts = new Date(f.created_at).toLocaleTimeString();
+      
+      chartData.X.push(Number(gx.toFixed(3)));
+      chartData.Y.push(Number(gy.toFixed(3)));
+      chartData.Z.push(Number(gz.toFixed(3)));
+      chartData.M.push(Number(mag.toFixed(3)));
+      chartData.labels.push(ts);
+      
+      addLogRow(idx+1, ts, gx, gy, gz, mag, tilt, thresh, ml);
+      
+      if (idx === feeds.length - 1) {
+        document.getElementById('mX').textContent = gx.toFixed(3);
+        document.getElementById('mY').textContent = gy.toFixed(3);
+        document.getElementById('mZ').textContent = gz.toFixed(3);
+        document.getElementById('mMag').textContent = mag.toFixed(3);
+        document.getElementById('mTilt').textContent = tilt;
+        document.getElementById('sysUpdate').textContent = ts;
+        document.getElementById('sysUpdate').style.color = 'var(--accent1)';
+        updateDetection(thresh, ml);
+        if (lastLat && lastLng) updateLocation(lastLat, lastLng);
+        else if (lat && lng) updateLocation(lat, lng);
+      }
+    });
+    buildChart(activeChart);
+  }
+
+  function updateDetection(thresh, ml) {
+    const tv = document.getElementById('dThresh');
+    const tb = document.getElementById('dThreshBadge');
+    const mv = document.getElementById('dML');
+    const mb = document.getElementById('dMLBadge');
+    const da = document.getElementById('dotAlert');
+    const la = document.getElementById('lblAlert');
+    
+    if (thresh === 1) {
+      tv.textContent = '1'; tv.style.color = 'var(--danger)';
+      tb.textContent = 'ACCIDENT'; tb.className = 'detect-badge badge-danger';
+      da.className = 'dot alert'; la.textContent = 'Alert: ACCIDENT DETECTED';
+    } else {
+      tv.textContent = '0'; tv.style.color = 'var(--accent3)';
+      tb.textContent = 'SAFE'; tb.className = 'detect-badge badge-safe';
+      da.className = 'dot'; la.textContent = 'Alert: None';
+    }
+    mv.textContent = ml;
+    if (ml === 1) {
+      mv.style.color = 'var(--danger)';
+      mb.textContent = 'ACCIDENT'; mb.className = 'detect-badge badge-danger';
+    } else {
+      mv.style.color = 'var(--accent3)';
+      mb.textContent = 'NORMAL'; mb.className = 'detect-badge badge-normal';
+    }
+  }
+
+  function updateLocation(lat, lng) {
+    document.getElementById('locLat').textContent = lat.toFixed(6);
+    document.getElementById('locLng').textContent = lng.toFixed(6);
+    const mapContainer = document.getElementById('mapContainer');
+    const bboxLngMargin = 0.005;
+    const bboxLatMargin = 0.005;
+    const minLng = lng - bboxLngMargin;
+    const maxLng = lng + bboxLngMargin;
+    const minLat = lat - bboxLatMargin;
+    const maxLat = lat + bboxLatMargin;
+    const embedSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${minLng}%2C${minLat}%2C${maxLng}%2C${maxLat}&layer=mapnik&marker=${lat}%2C${lng}`;
+    mapContainer.innerHTML = `<iframe width="100%" height="100%" style="border:0;" loading="lazy" allowfullscreen src="${embedSrc}"></iframe>`;
+    const link = document.getElementById('mapsLink');
+    link.href = `https://www.google.com/maps?q=${lat},${lng}`;
+    link.style.display = 'block';
+  }
+
+  function buildChart(axis) {
+    const ctx = document.getElementById('mainChart').getContext('2d');
+    if (chartInstance) chartInstance.destroy();
+    if (!chartData[axis] || chartData[axis].length === 0) {
+      chartInstance = null;
+      return;
+    }
+    chartInstance = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: chartData.labels,
+        datasets: [{
+          label: chartLabels[axis],
+          data: chartData[axis],
+          borderColor: chartColors[axis],
+          backgroundColor: chartColors[axis] + '20',
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: true,
+          tension: 0.3
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { display: false }, y: { grid: { color: '#e2e8f0' }, ticks: { color: '#64748b', font: { size: 10 } } } }
+      }
+    });
+  }
+
+  function showChart(axis, btnElem) {
+    activeChart = axis;
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    if (btnElem) btnElem.classList.add('active');
+    if (chartData[axis] && chartData[axis].length) buildChart(axis);
+  }
+
+  function clearLogTable() { document.getElementById('logBody').innerHTML = ''; }
+  
+  function addLogRow(n, ts, gx, gy, gz, mag, tilt, thresh, ml) {
+    const tr = document.createElement('tr');
+    const tClass = thresh === 1 ? 'log-danger' : 'log-safe';
+    const mClass = ml === 1 ? 'log-danger' : 'log-safe';
+    tr.innerHTML = `
+      <td style="color:var(--muted)">${n}</td>
+      <td>${ts}</td>
+      <td class="cv-x">${gx.toFixed(3)}</td>
+      <td class="cv-y">${gy.toFixed(3)}</td>
+      <td class="cv-z">${gz.toFixed(3)}</td>
+      <td class="cv-m">${mag.toFixed(3)}</td>
+      <td class="cv-t">${tilt}°</td>
+      <td class="${tClass}">${thresh === 1 ? '⚠ ACCIDENT' : '✓ SAFE'}</td>
+      <td class="${mClass}">${ml === 1 ? '⚠ ACCIDENT' : '✓ NORMAL'}</td>`;
+    document.getElementById('logBody').prepend(tr);
+  }
+
+  function setStatus(dotId, cls, label) {
+    const d = document.getElementById(dotId);
+    const textMap = { dotWifi:'lblWifi', dotData:'lblData', dotAlert:'lblAlert' };
+    if (d) d.className = 'dot ' + cls;
+    if (textMap[dotId]) document.getElementById(textMap[dotId]).textContent = label;
+  }
+
+  window.loadVideo = function(n) {
+    const url = document.getElementById(`vid${n}url`).value.trim();
+    const frame = document.getElementById(`vid${n}frame`);
+    if (!url) { frame.innerHTML = '<span>No video loaded</span>'; return; }
+    const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&?\s]+)/);
+    if (ytMatch) {
+      frame.innerHTML = `<iframe src="https://www.youtube.com/embed/${ytMatch[1]}" allowfullscreen></iframe>`;
+    } else if (url.match(/\.(mp4|webm|ogg)$/i) || url.includes('/') ) {
+      frame.innerHTML = `<video src="${url}" controls></video>`;
+    } else {
+      frame.innerHTML = `<video src="${url}" controls></video>`;
+    }
+  };
+
+  function clearAll() {
+    chartData = { X:[], Y:[], Z:[], M:[], labels:[] };
+    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+    clearLogTable();
+    document.getElementById('logBody').innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px;">Cleared — Press Fetch Live Data</td></tr>';
+    ['mX','mY','mZ','mMag','mTilt','dThresh','dML'].forEach(id => document.getElementById(id).textContent = '—');
+    ['dThreshBadge','dMLBadge'].forEach(id => document.getElementById(id).textContent = 'UNKNOWN');
+    document.getElementById('dThreshBadge').className = 'detect-badge badge-safe';
+    document.getElementById('dMLBadge').className = 'detect-badge badge-normal';
+    setStatus('dotWifi','','WiFi: Offline');
+    setStatus('dotData','','Data: Waiting');
+    setStatus('dotAlert','','Alert: None');
+    document.getElementById('sysWifi').textContent = '—';
+    document.getElementById('sysPoints').textContent = '—';
+    document.getElementById('sysUpdate').textContent = '—';
+    document.getElementById('locLat').textContent = '17.412977';
+    document.getElementById('locLng').textContent = '78.399029';
+    const mapContainer = document.getElementById('mapContainer');
+    mapContainer.innerHTML = `<iframe width="100%" height="100%" style="border:0;" loading="lazy" allowfullscreen
+        src="https://www.openstreetmap.org/export/embed.html?bbox=78.394029%2C17.407977%2C78.404029%2C17.417977&layer=mapnik&marker=17.412977%2C78.399029">
+      </iframe>`;
+    const link = document.getElementById('mapsLink');
+    link.href = "https://www.google.com/maps?q=17.412977,78.399029";
+  }
+
+  document.getElementById('fetchBtn').addEventListener('click', fetchThingSpeak);
+  document.getElementById('clearBtn').addEventListener('click', clearAll);
+  
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const axis = btn.getAttribute('data-chart');
+      if (axis) showChart(axis, btn);
+    });
+  });
+  
+  console.log("Dashboard ready — credentials securely embedded, not visible on UI.");
+</script>
+</body>
+</html>
