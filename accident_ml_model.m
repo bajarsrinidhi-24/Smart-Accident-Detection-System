@@ -1,7 +1,7 @@
 % ================= SETTINGS =================
 channelID = 3349962;
 readAPIKey = 'IDR8DUAZY02P5I0Z';
-writeAPIKey = 'B11O5ENONN6BWYQO';
+
 
 % ================= READ DATA =================
 data = thingSpeakRead(channelID, ...
